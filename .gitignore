@@ -119,3 +119,5 @@ log_*/
 # Mac
 .AppleDouble
 .LSOverride
+simworld_gym/SimWorldGym/simworld_gym/envs/setting/single_agent_world/simple/
+simworld_gym/SimWorldGym/simworld_gym/envs/setting/multi_agent_world/

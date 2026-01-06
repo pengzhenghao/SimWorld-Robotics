@@ -1,5 +1,5 @@
 from models import BaseModel
-from utils import extract_action_dict
+from baseline_utils import extract_action_dict
 
 
 class ReasoningAgent:

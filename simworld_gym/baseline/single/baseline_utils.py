@@ -1,5 +1,4 @@
 import matplotlib.pyplot as plt
-print("Loading utils")
 import numpy as np
 from PIL import Image
 import base64
@@ -114,3 +113,4 @@ def log_lines(folder_path: str, lines: List[Tuple[str, str]]):
     with open(os.path.join(folder_path, "LLM_Output.txt"), "a") as f:
         for tag, content in lines:
             f.write(f"[{tag}]" + str(content) + "\n")
+

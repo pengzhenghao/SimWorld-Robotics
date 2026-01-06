@@ -1,4 +1,5 @@
 import gym
+from typing import Tuple, Dict
 import os
 import time
 from datetime import datetime
@@ -604,7 +605,7 @@ class TrafficEnv(gym.Env):
 
         return observation, info
 
-    def step(self, action: int) -> tuple[np.ndarray, float, bool, bool, dict]:
+    def step(self, action: int) -> Tuple[np.ndarray, float, bool, bool, Dict]:
         """Execute one step in the environment.
         
         Args:

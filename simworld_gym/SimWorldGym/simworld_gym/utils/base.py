@@ -85,8 +85,10 @@ class ActionQueue:
     def __str__(self):
         return "\n".join([action.__str__() for action in self.queue])
 
+from typing import List, Dict
+
 class Action:
-    def __init__(self, actor_name, action_command, action_args: list[str], action_index: int, message: dict={}):
+    def __init__(self, actor_name, action_command, action_args: List[str], action_index: int, message: Dict={}):
         self.actor_name = actor_name
         self.action_command = action_command
         self.action_args = action_args

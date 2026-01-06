@@ -1,11 +1,12 @@
 import os
+print("Start script")
 import cv2
 import gym, simworld_gym
 import numpy as np
 import argparse
 import warnings
 
-from utils import numpy_to_base64, split_into_strips, action_history_text, save_images, log_lines
+from baseline_utils import numpy_to_base64, split_into_strips, action_history_text, save_images, log_lines
 from agents import ReasoningAgent, ReActAgent
 from prompt_template import nav_template, reasoning_template, perception_template
 
@@ -49,7 +50,7 @@ reward_setting = {
     "off_track_penalty": -0.01
 }
 env = gym.make(
-    'gym_citynav/SimpleWorld-v0' if setting == "simple" else 'gym_citynav/TrafficWorld-v0',
+    'simworld_gym/SimpleWorld' if setting == "simple" else 'simworld_gym/TrafficWorld',
     port=ue_port,
     resolution=(720, 600),
     render_mode="rgb_array",
