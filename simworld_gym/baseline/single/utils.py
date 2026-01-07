@@ -43,18 +43,55 @@ def split_into_strips(arr: np.ndarray) -> List[str]:
     return base64_strips
 
 def extract_action_dict(gpt_output: str):
-    try:
-        json_str = gpt_output.split("```json")[-1].strip("```")
-    except:
-        return False
-    try:
-        return json.loads(json_str)
-    except json.JSONDecodeError:
+    """
+    Best-effort JSON extraction.
+
+    Returns:
+        dict|list if parse succeeds, otherwise None.
+    """
+    if gpt_output is None:
+        return None
+
+    text = str(gpt_output).strip()
+    if not text:
+        return None
+
+    if "```json" in text:
+        candidate = text.split("```json", 1)[-1]
+        candidate = candidate.split("```", 1)[0].strip()
         try:
-            cleaned = json_str.encode('utf-8').decode('unicode_escape')
+            return json.loads(candidate)
+        except Exception:
+            pass
+
+    try:
+        return json.loads(text)
+    except Exception:
+        pass
+
+    def _try_substring(start_ch: str, end_ch: str):
+        start = text.find(start_ch)
+        end = text.rfind(end_ch)
+        if start != -1 and end != -1 and end > start:
+            sub = text[start : end + 1].strip()
+            try:
+                return json.loads(sub)
+            except Exception:
+        try:
+                    cleaned = sub.encode("utf-8").decode("unicode_escape")
             return json.loads(cleaned)
-        except json.JSONDecodeError as e:
-            return False
+                except Exception:
+                    return None
+        return None
+
+    parsed = _try_substring("{", "}")
+    if parsed is not None:
+        return parsed
+    parsed = _try_substring("[", "]")
+    if parsed is not None:
+        return parsed
+
+    return None
 
 action_mapping = ["Move_forward", "Rotate_left", "Rotate_right", "Move_left", "Move_right"]
 

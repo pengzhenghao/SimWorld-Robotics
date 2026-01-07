@@ -280,6 +280,7 @@ class AgentController:
     
     def render_video(self, duration, fps, render_mode, image_path):
         try:
+            os.makedirs(image_path, exist_ok=True)
             start_time = time.perf_counter()
             interval = 1/fps
             frame_idx = 0

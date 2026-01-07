@@ -277,7 +277,15 @@ class UnrealCV(SimworldUnrealCV):
             elif mode == 'file_path':  # save image to file and read it
                 cmd = f'vget /camera/{cam_id}/{viewmode} {img_path}'
                 img_dirs = self.client.request(cmd)
-                image = read_png(img_dirs)
+                # UnrealCV returns a filesystem path string here (not png bytes).
+                # The old code incorrectly tried to decode it as png bytes.
+                # Prefer the returned path; fall back to the requested path.
+                try:
+                    image = cv2.imread(img_dirs)
+                except Exception:
+                    image = None
+                if image is None and img_path:
+                    image = cv2.imread(img_path)
 
             if image is None:
                 raise ValueError(f"Failed to read image with mode={mode}, viewmode={viewmode}")

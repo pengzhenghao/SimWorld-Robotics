@@ -103,8 +103,11 @@ class ReasoningAgent:
                 })
         
         messages.append({"role": "user", "content": user_content})
-        result = self.model.generation(messages)
-        rd = extract_action_dict(result.get("output", ""))
+        result = self.model.generation(messages, enforce_json=True)
+        raw = result.get("output", "")
+        rd = extract_action_dict(raw)
+        if not isinstance(rd, dict):
+            raise ValueError(f"Failed to parse JSON from model output (trunc): {str(raw)[:500]}")
         return {
             "vision_description": rd.get("Description", None),
             "actions": rd.get("Actions", None),
@@ -226,8 +229,11 @@ class ReActAgent:
                 })
         
         perception_messages.append({"role": "user", "content": user_content})
-        perception_result = self.model.generation(perception_messages)
-        perception_rd = extract_action_dict(perception_result.get("output", ""))
+        perception_result = self.model.generation(perception_messages, enforce_json=True)
+        perception_raw = perception_result.get("output", "")
+        perception_rd = extract_action_dict(perception_raw)
+        if not isinstance(perception_rd, dict):
+            raise ValueError(f"Failed to parse perception JSON (trunc): {str(perception_raw)[:500]}")
         vision_description = perception_rd.get("Description", None)
         
         return {
@@ -270,8 +276,11 @@ class ReActAgent:
         reasoning_messages = [{"role": "system", "content": self.reasoning_prompt}]
         reasoning_messages.append({"role": "user", "content": reasoning_instance})
         
-        reasoning_result = self.model.generation(reasoning_messages)
-        reasoning_rd = extract_action_dict(reasoning_result.get("output", ""))
+        reasoning_result = self.model.generation(reasoning_messages, enforce_json=True)
+        reasoning_raw = reasoning_result.get("output", "")
+        reasoning_rd = extract_action_dict(reasoning_raw)
+        if not isinstance(reasoning_rd, dict):
+            raise ValueError(f"Failed to parse action JSON (trunc): {str(reasoning_raw)[:500]}")
         
         self.last_vision_descriptions = vision_description
         self.summary = reasoning_rd.get("Summary", self.summary)

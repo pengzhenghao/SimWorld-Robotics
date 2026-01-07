@@ -93,12 +93,18 @@ def ndtw(log_df, task_template, d=1000):
     
 
 def static_collision(log_df, task_template):
+    if "object_collision" not in log_df.columns or "building_collision" not in log_df.columns:
+        return np.nan
     return sum(log_df["object_collision"]) + sum(log_df["building_collision"])
 
 def dynamic_collision(log_df, task_template):
+    if "human_collision" not in log_df.columns or "vehicle_collision" not in log_df.columns:
+        return np.nan
     return sum(log_df["human_collision"]) + sum(log_df["vehicle_collision"])
 
 def violation(log_df, task_template):
+    if "red_light_violation" not in log_df.columns:
+        return np.nan
     return sum(log_df["red_light_violation"])
 
 

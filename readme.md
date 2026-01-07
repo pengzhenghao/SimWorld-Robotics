@@ -82,3 +82,8 @@ This notebook demonstrates:
 - Loading a sample navigation task
 - Running a vision-language model agent
 - Visualizing navigation results
+
+### Reproducing paper-style metrics (SR / Subtask SR / Distance Progress / Collisions)
+
+If you want to run through the full `easy/` split and compute aggregate metrics from `trajectory.csv`, see:
+- `simworld_gym/baseline/single/README.md`

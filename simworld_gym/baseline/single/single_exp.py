@@ -5,12 +5,32 @@ import gym, simworld_gym
 import numpy as np
 import argparse
 import warnings
+from typing import List
+import traceback
 
 from baseline_utils import numpy_to_base64, split_into_strips, action_history_text, save_images, log_lines
 from agents import ReasoningAgent, ReActAgent
 from prompt_template import nav_template, reasoning_template, perception_template
 
 warnings.filterwarnings("ignore")
+
+# numpy 2.x removed bool8 alias; Gym still references np.bool8
+if not hasattr(np, "bool8"):
+    np.bool8 = np.bool_
+
+
+def save_video(frames: List, video_path: str, fps: int = 10):
+    """Save a list of BGR frames to mp4."""
+    if not frames:
+        print("No frames to save for video.")
+        return
+    h, w = frames[0].shape[:2]
+    fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+    out = cv2.VideoWriter(video_path, fourcc, fps, (w, h))
+    for frame in frames:
+        out.write(frame)
+    out.release()
+    print(f"Saved video to {video_path}")
 
 parser = argparse.ArgumentParser(description="Run the agent in a simulated environment.")
 parser.add_argument("--map", type=str, default="20_0", help="Number of the World.")
@@ -38,7 +58,7 @@ segment = args.segment
 if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 
-ue_port = int(os.getenv("UE_PORT"))
+ue_port = int(os.getenv("UE_PORT", "9000"))
 
 print(f"Map: {map}, Backend: {backend}, Model: {model}, UE Port: {ue_port}")
 
@@ -84,8 +104,22 @@ task_2_test = [f"task_dist_{task}_0_1"]
 input_tokens = 0
 output_tokens = 0
 
+# Resolve writable output root
+output_root = os.environ.get("SIMWORLD_OUTPUT_DIR", os.path.join(os.getcwd(), "agent_log"))
+output_root = os.path.abspath(output_root)
+os.makedirs(output_root, exist_ok=True)
+print(f"Logging to: {output_root}")
+
 for task in task_2_test:
-    task_path = os.path.join("single_agent_world", "easy", f"map_road_{map}", task)
+    base_task_dir = os.path.join("single_agent_world", "easy", f"map_road_{map}")
+    # Fallback to bundled simple data if "easy" split is not available locally
+    if not os.path.exists(os.path.join(base_task_dir, task)):
+        sample_task_dir = os.path.join("single_agent_world", "simple", f"map_road_{map}")
+        if os.path.exists(os.path.join(sample_task_dir, task)):
+            print(f'WARNING: task "{task}" not found under "easy". Using simple data instead.')
+            base_task_dir = sample_task_dir
+    task_path = os.path.join(base_task_dir, task)
+    print(f"Using task path: {task_path}")
     world_json = os.path.join(task_path, "progen_world.json")
     agent_json = os.path.join(task_path, "task_config.json")
     if not initialized:
@@ -111,12 +145,14 @@ for task in task_2_test:
     instruction = info["current_instruction"]["text"]
     action_history = []
     chosen_actions = []
+    frames = []
     
     # Reset agent state for new task
     agent.reset_state()
     
-    folder_path = os.path.join("/SimWorld", "agent_log", f"{log_dir}", f"{map}", f"{task}")
+    folder_path = os.path.join(output_root, f"{log_dir}", f"{map}", f"{task}")
     os.makedirs(folder_path , exist_ok=True)
+    print(f"Saving run artifacts under: {folder_path}")
 
     i = 0
     terminated = False
@@ -134,6 +170,7 @@ for task in task_2_test:
             log_lines(folder_path, [("STUCK", "")])
             break
         last_position = current_position
+        frames.append(observation["rgb"].copy())
         save_images(
             observation["rgb"], vision_cue,
             os.path.join(folder_path, f"display_{i}.png")
@@ -192,7 +229,16 @@ for task in task_2_test:
                 log_entries.append((f"match {i}", str(match)))
             log_lines(folder_path, log_entries)
         except Exception as e:
-            print(f"Agent step error: {e}")
+            tb_str = "".join(traceback.format_exception(type(e), e, e.__traceback__))
+            err_msg = (
+                f"Agent step error: {e} | backend={backend} model={model} map={map} "
+                f"task={task} step={i}"
+            )
+            print(err_msg)
+            log_lines(folder_path, [
+                ("ERROR", err_msg),
+                ("TRACEBACK", tb_str),
+            ])
             parse_failure_count += 1
             if parse_failure_count > 10:
                 print("Too many errors, terminating.")
@@ -207,6 +253,7 @@ for task in task_2_test:
             i += 1
             if chosen_action == -1:
                 observation, _, terminated, _, info = env.step(-1)
+                frames.append(observation["rgb"].copy())
                 if terminated:
                     print("End")
                     break
@@ -218,8 +265,13 @@ for task in task_2_test:
                 if step_code is None:
                     continue
                 observation, _, terminated, _, info = env.step(step_code)
+                frames.append(observation["rgb"].copy())
         if terminated:
             print("End")
             break
+
+    # Save rollout video per task
+    video_path = os.path.join(folder_path, "rollout.mp4")
+    save_video(frames, video_path, fps=10)
                     
 env.close()
