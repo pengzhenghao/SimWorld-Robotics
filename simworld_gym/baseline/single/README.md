@@ -85,6 +85,8 @@ Notes:
   - `<out_dir>/logs/simpleenv_*/reset_*/trajectory.csv` (SimpleEnv)
   - `<out_dir>/logs/trafficenv_*/reset_*/trajectory.csv` (TrafficEnv)
 - By default the env creates an `images/` folder per episode but does **not** populate it. To save per-step images/videos, pass `--record_video` (can be large).
+- `sweep_exp.py` runs `evaluate.py` automatically at the end (writes `evaluation.txt` under the run `logs/` dir). Use `--no_eval_at_end` to disable.
+- To also write per-episode metrics immediately after each episode completes, pass `--eval_each_episode` (writes `evaluation.txt` + `evaluation.json` under each `reset_*` episode directory).
 
 ---
 
