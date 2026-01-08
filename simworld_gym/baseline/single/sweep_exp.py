@@ -112,6 +112,15 @@ def main():
         dest="eval_at_end",
         help="Disable end-of-sweep evaluation.",
     )
+    parser.add_argument(
+        "--eval_each_episode",
+        action="store_true",
+        default=False,
+        help=(
+            "Compute and write paper-style metrics after each episode (writes evaluation.txt/evaluation.json under each reset_* dir). "
+            "This is cheaper than running evaluate.py repeatedly because it evaluates only the current trajectory."
+        ),
+    )
     args = parser.parse_args()
 
     out_dir = os.path.abspath(args.out_dir)
@@ -496,6 +505,52 @@ def main():
                         ep_logger.log_step({"event": "videos_rendered", "outputs": outs})
             except Exception as e:
                 print(f"[warn] failed to render episode videos: {e}")
+
+        # Optional: evaluate metrics for this episode immediately.
+        if args.eval_each_episode:
+            try:
+                episode_dir = getattr(uw, "current_episode_dir", None)
+                traj_path = os.path.join(episode_dir, "trajectory.csv") if episode_dir else None
+                if episode_dir and traj_path and os.path.isfile(traj_path):
+                    from simworld_gym.utils import misc
+                    import pandas as pd
+
+                    from metric import (
+                        distance_progress,
+                        dynamic_collision,
+                        spl,
+                        static_collision,
+                        subtask_sr,
+                        violation,
+                    )
+
+                    # Task template used by metric.py (includes ideal_path/instruction/etc).
+                    template = misc.load_env_setting(os.path.join(task_path, "task_config.json"))
+                    df = pd.read_csv(traj_path)
+
+                    spl_v = float(spl(df, template))
+                    metrics = {
+                        "map": map_dir,
+                        "task": task_dir,
+                        "SR": float(1.0 if spl_v > 0 else 0.0),
+                        "SPL": spl_v,
+                        "Subtask_SR": float(subtask_sr(df, template)),
+                        "Distance_Progress": float(distance_progress(df, template)),
+                    }
+                    # Collisions are always present in trajectory.csv
+                    metrics["Static_Collisions"] = float(static_collision(df, template))
+                    metrics["Dynamic_Collisions"] = float(dynamic_collision(df, template))
+                    # Violations only exist for TrafficEnv
+                    if "red_light_violation" in df.columns:
+                        metrics["RedLight_Violations"] = float(violation(df, template))
+
+                    write_json(os.path.join(episode_dir, "evaluation.json"), metrics)
+                    with open(os.path.join(episode_dir, "evaluation.txt"), "w", encoding="utf-8") as f:
+                        for k, v in metrics.items():
+                            f.write(f"{k}: {v}\n")
+                    print(f"[{_now_str()}] [PHASE] episode_evaluate wrote {os.path.join(episode_dir, 'evaluation.txt')}")
+            except Exception as e:
+                print(f"[warn] eval_each_episode failed: {e}")
         if args.max_episodes > 0 and episodes_run >= args.max_episodes:
             break
 

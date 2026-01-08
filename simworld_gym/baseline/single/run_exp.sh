@@ -14,6 +14,5 @@ UE_PORT=9000 python sweep_exp.py --backend gemini --model gemini-2.5-flash --env
   --split easy \
   --segment \
   --out_dir gemini-2.5-flash_easy_simple_0107 \
-  --tasks task_dist_11_0_1 \
   --record_video \
-  --max_maps 1
+  --eval_each_episode
