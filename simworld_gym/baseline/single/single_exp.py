@@ -7,10 +7,12 @@ import argparse
 import warnings
 from typing import List
 import traceback
+from pathlib import Path
 
 from baseline_utils import numpy_to_base64, split_into_strips, action_history_text, save_images, log_lines
 from agents import ReasoningAgent, ReActAgent
 from prompt_template import nav_template, reasoning_template, perception_template
+from exp_artifacts import EpisodeLogger, render_mp4_from_frames, utc_timestamp, write_json
 
 warnings.filterwarnings("ignore")
 
@@ -20,7 +22,7 @@ if not hasattr(np, "bool8"):
 
 
 def save_video(frames: List, video_path: str, fps: int = 10):
-    """Save a list of BGR frames to mp4."""
+    """Save a list of RGB frames (HWC uint8) to mp4."""
     if not frames:
         print("No frames to save for video.")
         return
@@ -28,7 +30,8 @@ def save_video(frames: List, video_path: str, fps: int = 10):
     fourcc = cv2.VideoWriter_fourcc(*'mp4v')
     out = cv2.VideoWriter(video_path, fourcc, fps, (w, h))
     for frame in frames:
-        out.write(frame)
+        # OpenCV's VideoWriter expects BGR; Gym/SimWorld provides RGB.
+        out.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
     out.release()
     print(f"Saved video to {video_path}")
 
@@ -110,6 +113,26 @@ output_root = os.path.abspath(output_root)
 os.makedirs(output_root, exist_ok=True)
 print(f"Logging to: {output_root}")
 
+# Create a per-run directory so artifacts don't collide across invocations.
+run_id = os.environ.get("SIMWORLD_RUN_ID", utc_timestamp())
+run_dir = os.path.join(output_root, log_dir, run_id)
+os.makedirs(run_dir, exist_ok=True)
+write_json(
+    os.path.join(run_dir, "run_config.json"),
+    {
+        "backend": backend,
+        "model": model,
+        "setting": setting,
+        "map": map,
+        "reasoning": bool(reasoning),
+        "strip": bool(strip),
+        "depth": bool(depth),
+        "segment": bool(segment),
+        "ue_port": ue_port,
+        "run_id": run_id,
+    },
+)
+
 for task in task_2_test:
     base_task_dir = os.path.join("single_agent_world", "easy", f"map_road_{map}")
     # Fallback to bundled simple data if "easy" split is not available locally
@@ -150,9 +173,10 @@ for task in task_2_test:
     # Reset agent state for new task
     agent.reset_state()
     
-    folder_path = os.path.join(output_root, f"{log_dir}", f"{map}", f"{task}")
+    folder_path = os.path.join(run_dir, f"{map}", f"{task}")
     os.makedirs(folder_path , exist_ok=True)
     print(f"Saving run artifacts under: {folder_path}")
+    ep_logger = EpisodeLogger.for_episode(folder_path)
 
     i = 0
     terminated = False
@@ -171,10 +195,16 @@ for task in task_2_test:
             break
         last_position = current_position
         frames.append(observation["rgb"].copy())
-        save_images(
-            observation["rgb"], vision_cue,
-            os.path.join(folder_path, f"display_{i}.png")
-        )
+        # Save decision-time images for debugging
+        try:
+            img_dir = os.path.join(folder_path, "agent_images")
+            os.makedirs(img_dir, exist_ok=True)
+            tag = f"{i:06d}"
+            cv2.imwrite(os.path.join(img_dir, f"current_{tag}.png"), observation["rgb"])
+            cv2.imwrite(os.path.join(img_dir, f"expected_{tag}.png"), vision_cue)
+            save_images(observation["rgb"], vision_cue, os.path.join(img_dir, f"display_{tag}.png"))
+        except Exception:
+            pass
 
         # Preprocess images
         images = []
@@ -217,6 +247,22 @@ for task in task_2_test:
             print(f"[vision {i}]", vision_description)
             if reason:
                 print(f"[reason {i}]", reason)
+            ep_logger.log_step(
+                {
+                    "event": "llm_step",
+                    "step": i,
+                    "instruction": instruction,
+                    "orientation": orientation,
+                    "agent_location": current_position,
+                    "action_history": list(action_history),
+                    "chosen_actions": list(chosen_actions) if chosen_actions else [],
+                    "vision_description": vision_description,
+                    "summary": summary,
+                    "match": match,
+                    "reason": reason,
+                    "usage": usage,
+                }
+            )
             log_entries = [
                 ("current subtask", instruction),
                 (f"vision {i}", str(vision_description).replace("\n", "")),
@@ -235,6 +281,19 @@ for task in task_2_test:
                 f"task={task} step={i}"
             )
             print(err_msg)
+            ep_logger.log_step(
+                {
+                    "event": "llm_error",
+                    "step": i,
+                    "instruction": instruction,
+                    "orientation": orientation,
+                    "agent_location": current_position,
+                    "action_history": list(action_history),
+                    "chosen_actions": list(chosen_actions) if chosen_actions else [],
+                    "error": err_msg,
+                    "traceback": tb_str,
+                }
+            )
             log_lines(folder_path, [
                 ("ERROR", err_msg),
                 ("TRACEBACK", tb_str),
@@ -273,5 +332,15 @@ for task in task_2_test:
     # Save rollout video per task
     video_path = os.path.join(folder_path, "rollout.mp4")
     save_video(frames, video_path, fps=10)
+    # Also render a quick observation video from saved decision-time images if present.
+    try:
+        img_dir = Path(folder_path) / "agent_images"
+        paths = sorted(img_dir.glob("current_*.png"))
+        if paths:
+            out = render_mp4_from_frames(paths, Path(folder_path) / "observations.mp4", fps=10)
+            if out:
+                ep_logger.log_step({"event": "videos_rendered", "observations_mp4": str(out)})
+    except Exception:
+        pass
                     
 env.close()

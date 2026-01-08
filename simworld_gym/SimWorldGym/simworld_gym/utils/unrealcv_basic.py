@@ -28,6 +28,31 @@ class UnrealCV(SimworldUnrealCV):
         self.resolution = resolution
         self.ini_unrealcv(resolution)
 
+    def _safe_request(self, cmd: str, timeout_s: float = 2.0, retries: int = 3):
+        """
+        Best-effort UnrealCV request that avoids indefinite blocking.
+
+        Note: unrealcv.Client.request can block forever if UE doesn't respond.
+        We prefer a finite timeout and retries for robustness during UE startup.
+        """
+        last_err = None
+        for _ in range(max(1, int(retries))):
+            try:
+                # Some unrealcv versions accept `timeout` positional arg; others don't.
+                try:
+                    return self.client.request(cmd, timeout_s)
+                except TypeError:
+                    return self.client.request(cmd)
+            except Exception as e:
+                last_err = e
+                try:
+                    self.client.connect()
+                except Exception:
+                    pass
+                time.sleep(0.2)
+        print(f"[warn] UnrealCV request failed: cmd='{cmd}' err={last_err}")
+        return None
+
     def ini_unrealcv(self, resolution=(320, 240)):
         self.check_connection()
         [w, h] = resolution
@@ -37,7 +62,21 @@ class UnrealCV(SimworldUnrealCV):
         # self.client.request('vrun sg.TextureQuality 1', -1)  # set texture quality to low
         # self.client.request('vrun sg.EffectsQuality 1', -1)  # set effects quality to low
 
-        self.client.request('vrun Editor.AsyncSkinnedAssetCompilation 2', -1)
+        # Avoid indefinite hangs on startup: send with timeout + retries.
+        self._safe_request('vrun Editor.AsyncSkinnedAssetCompilation 2', timeout_s=5.0, retries=5)
+
+        # Disable auto exposure / eye adaptation to prevent progressive brightening across frames.
+        # Can be overridden by setting SIMWORLD_DISABLE_AUTO_EXPOSURE=0.
+        disable_ae = os.environ.get("SIMWORLD_DISABLE_AUTO_EXPOSURE", "1").lower() not in ("0", "false", "no")
+        if disable_ae:
+            # These are UE console vars; harmless if unsupported (we just warn and continue).
+            for c in [
+                "vrun r.DefaultFeature.AutoExposure 0",
+                "vrun r.EyeAdaptationQuality 0",
+                # Some UE versions use this name; include it just in case.
+                "vrun r.EyeAdaptation.Method 0",
+            ]:
+                self._safe_request(c, timeout_s=2.0, retries=2)
 
         time.sleep(1.0)
         
@@ -244,9 +283,46 @@ class UnrealCV(SimworldUnrealCV):
         cv2.waitKey(3)
 
     def set_fps(self, fps):
-        cmd = f'vset /action/set_fixed_frame_rate {fps}'
-        with self.lock:
-            self.client.request(cmd)
+        """
+        Set UE fixed frame rate via UnrealCV.
+
+        Why this can "hang":
+        - `unrealcv.Client.request()` blocks waiting for a reply on an internal queue.
+          If UE is still booting / overloaded / temporarily not responding, this can block forever.
+        - Some UE builds/plugins may not support this command; in that case no reply may be sent.
+
+        We therefore use a small timeout + retries and fail gracefully (log + continue).
+        """
+        cmd = f"vset /action/set_fixed_frame_rate {fps}"
+        # Best-effort: ensure we are connected before issuing the command.
+        try:
+            self.check_connection()
+        except Exception:
+            pass
+
+        # Try a few times with a finite timeout to avoid indefinite hangs.
+        last_err = None
+        for attempt in range(3):
+            try:
+                with self.lock:
+                    # Some unrealcv versions accept `timeout` positional arg; others don't.
+                    try:
+                        res = self.client.request(cmd, 2)
+                    except TypeError:
+                        res = self.client.request(cmd)
+                # Many builds return "ok"; don't over-enforce.
+                return res
+            except Exception as e:
+                last_err = e
+                # Attempt reconnect then retry
+                try:
+                    self.client.connect()
+                except Exception:
+                    pass
+                time.sleep(0.2)
+
+        print(f"[warn] set_fps failed after retries (fps={fps}): {last_err}")
+        return None
     
     def read_image(self, cam_id, viewmode, mode='direct', img_path=None):
         # cam_id:0 1 2 ...

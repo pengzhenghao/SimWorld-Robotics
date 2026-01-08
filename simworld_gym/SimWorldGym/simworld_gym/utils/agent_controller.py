@@ -26,6 +26,66 @@ class AgentController:
         self.observation = {}
         self.initial_camera_setting = True
         self.reset_time = 0
+        # Camera exposure handling:
+        # Historically we were toggling exposure_bias (0 -> 4.5 -> 0) on EVERY frame capture.
+        # That can interact badly with Unreal's auto-exposure and cause progressive brightening.
+        # Instead, set a single exposure bias and avoid spamming per-frame changes.
+        #
+        # You can override via env var SIMWORLD_EXPOSURE_BIAS (float). Use "None" to skip setting.
+        # Default is 0.0 because we now disable UE auto-exposure/eye-adaptation in UnrealCV init.
+        self.exposure_bias = None
+        self._last_exposure_bias = None
+        # Workaround for Unreal auto-exposure adaptation drift (progressively over-bright frames).
+        # Upstream suggested workaround:
+        #   vset /camera/{camera_id}/auto_brightness 1 1
+        # You can disable via SIMWORLD_AUTO_BRIGHTNESS=none
+        self.auto_brightness: Optional[tuple[int, int]] = (1, 1)
+        self._auto_brightness_applied = False
+        try:
+            import os
+
+            v = os.environ.get("SIMWORLD_EXPOSURE_BIAS", "0.0")
+            if v.lower() != "none":
+                self.exposure_bias = float(v)
+            ab = os.environ.get("SIMWORLD_AUTO_BRIGHTNESS", "1 1").strip().lower()
+            if ab == "none":
+                self.auto_brightness = None
+            else:
+                parts = ab.split()
+                if len(parts) == 2:
+                    self.auto_brightness = (int(parts[0]), int(parts[1]))
+        except Exception:
+            self.exposure_bias = 0.0
+
+    def _ensure_camera_auto_brightness(self):
+        """Idempotently apply auto_brightness workaround (if enabled)."""
+        try:
+            if self.camera_id is None or self.camera_id == -1:
+                return
+            if self.auto_brightness is None:
+                return
+            if self._auto_brightness_applied:
+                return
+            a, b = self.auto_brightness
+            self.client.client.request(f"vset /camera/{self.camera_id}/auto_brightness {a} {b}")
+            self._auto_brightness_applied = True
+        except Exception as e:
+            print(f"Warning: failed to set auto_brightness for camera {self.camera_id}: {e}")
+
+    def _ensure_camera_exposure(self):
+        """Idempotently apply the configured exposure bias (if any)."""
+        try:
+            if self.camera_id is None or self.camera_id == -1:
+                return
+            if self.exposure_bias is None:
+                return
+            if self._last_exposure_bias == self.exposure_bias:
+                return
+            self.client.client.request(f"vset /camera/{self.camera_id}/exposure_bias {self.exposure_bias}")
+            self._last_exposure_bias = self.exposure_bias
+        except Exception as e:
+            # Don't fail image capture if exposure setting fails.
+            print(f"Warning: failed to set exposure_bias for camera {self.camera_id}: {e}")
 
     def reset(self, agent_json=None, if_single_agent=True):
         if agent_json:
@@ -84,6 +144,8 @@ class AgentController:
             self.client.client.request("vset /camera/{}/reflection Lumen".format(self.camera_id))
             self.client.client.request("vset /camera/{}/illumination Lumen".format(self.camera_id))
             self.client.client.request("vset /camera/{}/fov 120".format(self.camera_id))
+            self._ensure_camera_auto_brightness()
+            self._ensure_camera_exposure()
         except Exception as e:
             print(f"Error generating robot: {e}")
 
@@ -266,13 +328,12 @@ class AgentController:
 
     def get_image(self, view_mode, mode, file_path=None):
         try:
-            self.client.client.request("vset /camera/{}/exposure_bias 0".format(self.camera_id))
-            self.client.client.request("vset /camera/{}/exposure_bias 4.5".format(self.camera_id))
+            self._ensure_camera_auto_brightness()
+            self._ensure_camera_exposure()
             if file_path:
                 img = self.client.read_image(self.camera_id, view_mode, mode, file_path)
             else:
                 img = self.client.read_image(self.camera_id, view_mode, mode)
-            self.client.client.request("vset /camera/{}/exposure_bias 0".format(self.camera_id))
             return img
         except Exception as e:
             print(f"Error getting image from camera {self.camera_id}: {e}")
