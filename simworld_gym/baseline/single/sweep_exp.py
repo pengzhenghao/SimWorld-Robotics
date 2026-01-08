@@ -30,7 +30,10 @@ def _fmt_s(dt_s: float) -> str:
 
 def _iter_tasks(split: str) -> Iterable[Tuple[str, str]]:
     """
-    Yield (map_dir, task_dir) pairs from the installed simworld_gym settings.
+    Yield (map_dir, task_dir) pairs from the installed simworld_gym settings,
+    but only yield task_dirs that match the specific rule:
+        task = 11 if int(map.split("_")[1]) < 50 else 21
+        task_dir must be f"task_dist_{task}_0_1"
     Example:
       ("map_road_20_0", "task_dist_11_0_1")
     """
@@ -42,10 +45,15 @@ def _iter_tasks(split: str) -> Iterable[Tuple[str, str]]:
         map_path = os.path.join(base, map_dir)
         if not (os.path.isdir(map_path) and map_dir.startswith("map_road_")):
             continue
-        for task_dir in sorted(os.listdir(map_path)):
-            task_path = os.path.join(map_path, task_dir)
-            if os.path.isdir(task_path) and task_dir.startswith("task_"):
-                yield map_dir, task_dir
+        # Compute the expected task_dir based on the map's number
+        parts = map_dir.split("_")
+        map_number = int(parts[-1])
+        task = 11 if map_number < 50 else 21
+        target_task_dir = f"task_dist_{task}_0_1"
+        task_path = os.path.join(map_path, target_task_dir)
+        if os.path.isdir(task_path):
+            yield map_dir, target_task_dir
+
 
 
 def main():
@@ -54,7 +62,7 @@ def main():
     parser.add_argument("--model", type=str, default="gpt-4o")
     parser.add_argument("--env", choices=["simple", "traffic"], default="simple")
     parser.add_argument("--split", choices=["easy", "sample"], default="easy")
-    parser.add_argument("--tasks", nargs="*", default=None, help="Optional task dirs to include (e.g. task_dist_11_0_1)")
+    # parser.add_argument("--tasks", nargs="*", default=None, help="Optional task dirs to include (e.g. task_dist_11_0_1)")
     parser.add_argument("--maps", nargs="*", default=None, help="Optional map dirs to include (e.g. map_road_20_0)")
     parser.add_argument(
         "--max_maps",
@@ -95,8 +103,14 @@ def main():
     parser.add_argument(
         "--eval_at_end",
         action="store_true",
-        default=bool(int(os.environ.get("SWEEP_EVAL_AT_END", "0"))),
-        help="If set, run evaluate.py at the end of the sweep and save the summary under the run log directory.",
+        default=True,
+        help="Run evaluate.py at the end of the sweep and save the summary under the run log directory (default: on).",
+    )
+    parser.add_argument(
+        "--no_eval_at_end",
+        action="store_false",
+        dest="eval_at_end",
+        help="Disable end-of-sweep evaluation.",
     )
     args = parser.parse_args()
 
@@ -135,7 +149,7 @@ def main():
             "model": args.model,
             "env": args.env,
             "split": args.split,
-            "tasks": args.tasks,
+            # "tasks": args.tasks,
             "maps": args.maps,
             "max_maps": args.max_maps,
             "ue_port": args.ue_port,
@@ -176,8 +190,8 @@ def main():
     for map_dir, task_dir in _iter_tasks(args.split):
         if args.maps and map_dir not in args.maps:
             continue
-        if args.tasks and task_dir not in args.tasks:
-            continue
+        # if args.tasks and task_dir not in args.tasks:
+        #     continue
         if args.max_maps > 0 and map_dir not in seen_maps:
             if len(seen_maps) >= args.max_maps:
                 continue
